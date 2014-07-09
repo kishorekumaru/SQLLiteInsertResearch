@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   xmlns:mx="library://ns.adobe.com/flex/mx"
+					   height="550" width="780">
+	<fx:Script>
+		<![CDATA[
+			import com.ibm.gss.MultiTimer;
+			import com.ibm.gss.SQLLiteDBConnect;
+			import com.ibm.gss.events.SQLConnectionError;
+			import com.ibm.gss.events.SQLConnectionResult;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			import mx.core.INavigatorContent;
+			import mx.events.FlexEvent;
+			import mx.managers.PopUpManager;
+			import mx.messaging.ChannelSet;
+			import mx.messaging.config.ServerConfig;
+			import mx.rpc.AsyncResponder;
+			import mx.rpc.AsyncToken;
+			import mx.rpc.events.FaultEvent;
+			import mx.rpc.events.ResultEvent;
+			import mx.utils.object_proxy;
+			
+			import spark.events.IndexChangeEvent;
+			
+			
+			
+			public var cs:ChannelSet; 
+			public var token:AsyncToken;
+			
+			private var _totalEmpList:ArrayCollection;
+			private var sqlLiteDB:SQLLiteDBConnect
+			private var firstCounterStart:int;
+			private var lastCounterStart:int;
+			private var insertCount:int =0;
+			private var loadingNum:int;
+			private var excuteTimerArr:ArrayCollection = new ArrayCollection();
+			private var executeInsertTimer:Timer;
+			private var executeInsertTimer1:Timer;
+			private var totalExecution:int;
+			private var countInc:int = 100;
+			private var totalTimer:int = 4;
+
+			
+			private function syncToLocal():void{
+				
+				var timerInt:int;
+				_totalEmpList = new ArrayCollection();
+				
+				//Insert Dummy Records
+				
+				var totalRecords:int = int(txtTotalRecords.text);
+				
+				for(var i:int=0; i < totalRecords; i++){
+					var obj:Object = new Object();
+					obj.employeeId = i;
+					obj.employeeName = "Name" +  i;
+					obj.employeeAddr = "Addr"+i;
+					_totalEmpList.addItem(obj);
+				}
+				// End of Insertion
+				
+				
+				sqlLiteDB = new SQLLiteDBConnect("lcds.db");
+				
+				totalTimer = int(txtTimerNumber.text);
+				countInc = int(txtInsertionRecrods.text);
+				
+				firstCounterStart = Math.floor(_totalEmpList.length/(totalTimer*countInc));
+				
+				
+				lastCounterStart = firstCounterStart+(_totalEmpList.length%(totalTimer*countInc));
+				
+				
+				for(timerInt=0; timerInt < totalTimer;timerInt++){
+					var myMultiTimer:MultiTimer = new MultiTimer(20);
+					myMultiTimer.repeatCount = firstCounterStart;
+					myMultiTimer.id = timerInt;
+					myMultiTimer.addEventListener(TimerEvent.TIMER,onExecuteInsertTimer);
+					myMultiTimer.addEventListener(TimerEvent.TIMER_COMPLETE,closeTimer);
+					if(timerInt == (totalTimer -1)){
+						myMultiTimer.repeatCount = lastCounterStart;
+					}
+					excuteTimerArr.addItem(myMultiTimer);
+				}
+				
+				sqlLiteDB.addEventListener(SQLConnectionResult.DB_SUCCESS, DBSuccess);
+				sqlLiteDB.addEventListener(SQLConnectionError.RESULT_FAILURE, dbFailure);
+				
+				
+				
+				
+			}
+			
+			
+			
+			private function closeTimer(event:TimerEvent):void{
+				var myTimer:MultiTimer = excuteTimerArr[event.currentTarget.id] as MultiTimer;
+				myTimer.removeEventListener(TimerEvent.TIMER, onExecuteInsertTimer);
+				myTimer.removeEventListener(TimerEvent.TIMER_COMPLETE, closeTimer);
+				myTimer = null;
+			}
+			
+			private function DBSuccess(event:SQLConnectionResult):void{
+				trace(event.dbCreated);	
+				sqlLiteDB.addEventListener(SQLConnectionResult.QUERY_RESULT, queryResult);	
+				
+				var sql:String =         "CREATE TABLE IF NOT EXISTS employee (" +
+					" 	 emp_id TEXT, " +
+					"    emp_name TEXT, " +
+					"    emp_addr TEXT" +
+					")";
+				
+				
+				sqlLiteDB.executeQuery(sql);
+				
+			}
+			
+			private function dbFailure(event:SQLConnectionError):void{
+				Alert.show(event.errorDetails, event.errorMessage);
+			}
+			
+			private function onExecuteInsertTimer(event:TimerEvent):void
+			{
+				excuteTimerArr[event.currentTarget.id]
+				var indexVal:int;
+				var myTimer:MultiTimer = excuteTimerArr[event.currentTarget.id] as MultiTimer;
+				if(int(event.currentTarget.id) == 0){
+					indexVal = 0 ;
+				}else{
+					indexVal = int(event.currentTarget.id) * (firstCounterStart * countInc);
+				}
+				
+				if(myTimer.currentCount > 1){
+					indexVal = indexVal + (countInc * (myTimer.currentCount - 1));
+				}
+				
+				var sqlStr:String = "Insert into employee SELECT '" + _totalEmpList [indexVal].employeeId + "' AS 'emp_id', '" +
+					_totalEmpList [indexVal].employeeName + "' AS 'emp_name', '" +
+					_totalEmpList [indexVal].employeeAddr + "' AS 'emp_addr'";
+				if(myTimer.currentCount <= myTimer.repeatCount){
+					for (var i:int=(indexVal + 1); i < int(indexVal + int(countInc)); i++){
+						if(i < _totalEmpList.length){
+							sqlStr += "UNION SELECT '" + _totalEmpList [i].employeeId + "', '" +
+								_totalEmpList [i].employeeName + "', '" +
+								_totalEmpList [i].employeeAddr + "' ";
+						}else{
+							myTimer.stop();
+							sqlStr = sqlStr + " ";
+							sqlLiteDB.executeQuery(sqlStr);
+							trace(sqlStr);
+							outPutTxt.text +=  sqlStr + "\n";
+							sqlLiteDB.callCommit();
+							sqlLiteDB.closeConnection();
+							return;
+						}
+					}
+					
+					sqlStr = sqlStr.slice(0,-1);
+					trace(sqlStr);
+					outPutTxt.text +=  sqlStr + "\n";
+					sqlLiteDB.executeQuery(sqlStr);
+				}else{
+					
+					myTimer.stop();
+					if(int(event.currentTarget.id) == int(totalTimer -1)){
+						
+					}
+				}
+				
+			}
+			
+			
+			private function queryResult(event:SQLConnectionResult=null):void{
+				
+				
+				var myTimer:MultiTimer;
+				if(event.queryType == SQLConnectionResult.CREATE){	
+					for(var timerInt:int=0; timerInt < totalTimer;timerInt++){
+						myTimer = excuteTimerArr[timerInt] as MultiTimer;
+						myTimer.start();
+					}
+					sqlLiteDB.callBegin();
+				}
+				
+				loadingText.text =  "Synchronizing data .. " + 
+					String(Math.round(( excuteTimerArr[0].currentCount/ excuteTimerArr[0].repeatCount)*100)) + "% Completed";
+				
+			}
+			
+			
+		]]>
+	</fx:Script>
+	
+	<s:Panel width="483" height="173" title="Enter Details"  x="144" y="10">
+		<s:layout>
+			<s:VerticalLayout gap="10" paddingTop="20" />
+		</s:layout>
+		<mx:FormItem label="Total Number of Records">
+			<s:TextInput id="txtTotalRecords" width="265"/>
+		</mx:FormItem>
+		<mx:FormItem label="Number of Records per Insertion">
+			<s:TextInput id="txtInsertionRecrods"  width="265"/>
+		</mx:FormItem>
+		<mx:FormItem label="Number of Threads">
+			<s:TextInput id="txtTimerNumber"  width="265"/>
+		</mx:FormItem>
+	</s:Panel>
+	
+	<mx:Button label="Sync to Local" click="syncToLocal()" x="345" y="213" />
+	<mx:Label id="loadingText" x="451" y="214"/>
+	<s:Panel width="670" height="266" title="Query Result" x="55" y="252">
+		<s:TextArea id="outPutTxt" width="100%" height="100%" />
+	</s:Panel>
+	
+</s:WindowedApplication>
